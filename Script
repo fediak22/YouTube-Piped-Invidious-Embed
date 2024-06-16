@@ -1,0 +1,144 @@
+// ==UserScript==
+// @name         Replace YouTube Player with Piped/Invidious Embed
+// @namespace    http://tampermonkey.net/
+// @version      1.8
+// @description  Replace YouTube video player with Piped or Invidious embedded player
+// @author       You
+// @match        *://www.youtube.com/watch*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Preferred instances
+    const pipedInstance = 'https://piped.kavin.rocks';
+    const invidiousInstance = 'https://invidious.fdn.fr';
+    const preferredInstance = invidiousInstance; // Change to pipedInstance if preferred
+
+    let iframe = null;
+    let currentVideoId = null;
+
+    function createEmbedUrl(videoId) {
+        return `${preferredInstance}/embed/${videoId}?quality=dash`; // Using DASH for better quality options
+    }
+
+    function createIframe(embedUrl) {
+        const iframe = document.createElement('iframe');
+        iframe.width = '100%';
+        iframe.style.aspectRatio = '16/9'; // Ensures 16:9 aspect ratio
+        iframe.style.borderRadius = '12px'; // Add rounded corners
+        iframe.style.overflow = 'hidden'; // Ensure content fits within the rounded corners
+        iframe.style.border = 'none'; // Remove border
+        iframe.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)'; // Add shadow for YouTube-like appearance
+        iframe.src = embedUrl;
+        iframe.frameBorder = '0';
+        iframe.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';
+        iframe.allowFullscreen = true;
+        iframe.onerror = function() {
+            console.error('Error loading the embedded player.');
+        };
+        return iframe;
+    }
+
+    function replacePlayer() {
+        const videoId = new URLSearchParams(window.location.search).get('v');
+        currentVideoId = videoId;
+        if (videoId) {
+            const embedUrl = createEmbedUrl(videoId);
+            const playerElement = document.querySelector('#player');
+            if (playerElement) {
+                console.log('Player element found. Replacing with embedded player.');
+
+                // Create and configure the iframe
+                iframe = createIframe(embedUrl);
+
+                // Clear the existing player content and append the iframe
+                playerElement.innerHTML = '';
+                playerElement.appendChild(iframe);
+
+                console.log('Embedded player added.');
+            } else {
+                console.error('Player element not found.');
+            }
+        } else {
+            console.error('Video ID not found in URL.');
+        }
+    }
+
+    function stopOriginalVideo() {
+        const video = document.querySelector('video.html5-main-video');
+        if (video) {
+            video.pause();
+            video.muted = true;
+        }
+    }
+
+    function continuouslyReplacePlayerFor10Seconds() {
+        let counter = 0;
+        const interval = setInterval(() => {
+            if (counter >= 1) {
+                clearInterval(interval);
+                console.log('Stopped replacing player after 10 seconds.');
+            } else {
+                stopOriginalVideo();
+                replacePlayer();
+                counter++;
+            }
+        }, 1000);
+    }
+
+    function muteAndPauseOriginalPlayer() {
+        const originalPlayer = document.getElementById('movie_player');
+        if (originalPlayer) {
+            originalPlayer.pauseVideo = originalPlayer.pauseVideo || function() {};
+            originalPlayer.mute = originalPlayer.mute || function() {};
+            originalPlayer.mute();
+            originalPlayer.pauseVideo();
+            console.log('Original player muted and paused.');
+        }
+    }
+
+    function checkAndStopIfNotOnVideoPage() {
+        const videoId = new URLSearchParams(window.location.search).get('v');
+        if (videoId !== currentVideoId) {
+            stopOriginalVideo();
+            if (iframe && iframe.parentElement) {
+                iframe.parentElement.removeChild(iframe);
+            }
+        }
+    }
+
+    // Run the function when the page is fully loaded
+    window.addEventListener('load', () => {
+        console.log('Page loaded. Starting 10-second replacement.');
+        muteAndPauseOriginalPlayer();
+        continuouslyReplacePlayerFor10Seconds();
+    });
+
+    // Detect and replace player on AJAX navigation (YouTube SPA behavior)
+    let lastUrl = location.href;
+    new MutationObserver(() => {
+        const url = location.href;
+        if (url !== lastUrl) {
+            lastUrl = url;
+            console.log('URL changed. Restarting 10-second replacement.');
+            stopOriginalVideo(); // Stop the previous video
+            muteAndPauseOriginalPlayer(); // Mute and pause the new original player
+            continuouslyReplacePlayerFor10Seconds();
+        }
+    }).observe(document, {subtree: true, childList: true});
+
+    // Stop video playback when navigating away from the page
+    window.addEventListener('beforeunload', () => {
+        stopOriginalVideo();
+    });
+
+    // Stop video playback when navigating to a different YouTube page (SPA behavior)
+    const stopPlaybackOnNavigation = () => {
+        checkAndStopIfNotOnVideoPage();
+    };
+
+    document.addEventListener('yt-navigate-start', stopPlaybackOnNavigation);
+    document.addEventListener('yt-page-data-updated', stopPlaybackOnNavigation);
+})();
